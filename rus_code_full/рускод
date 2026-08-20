@@ -1,26 +1,750 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-РусКод - Универсальный язык программирования на русском языке.
-Запуск программ из терминала.
+РУСКОД - УНИВЕРСАЛЬНЫЙ ЯЗЫК ПРОГРАММИРОВАНИЯ НА РУССКОМ ЯЗЫКЕ
+Версия 2.0 с поддержкой всех Python библиотек через адаптер
 
-Использование:
-    рускод <имя_файла> [аргументы]
-    
-Примеры:
-    рускод программа.рк
-    рускод примеры/калькулятор.рк
-    python3 рускод моя_программа.рк
+Запуск: ./рускод имя_файла.рк
 """
 
 import sys
 import os
+import re
+import ast
+import importlib
+from typing import Any, Dict, List, Optional, Callable, Tuple
+from pathlib import Path
 
-# Добавляем директорию core в путь
-script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(script_dir, 'core'))
+# Добавляем путь к адаптеру
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'adapters'))
+from python_adapter import АдаптерPython, использовать_библиотеку, транслировать
 
-from interpreter import главный
+class ИнтерпретаторРусКод:
+    """Основной интерпретатор языка РусКод"""
+    
+    def __init__(self):
+        self.переменные = {}
+        self.функции = {}
+        self.библиотеки = {}
+        self.адаптер = АдаптерPython()
+        self.результат_выполнения = []
+        
+        # Регистрируем встроенные функции
+        self._зарегистрировать_встроенные_функции()
+    
+    def _зарегистрировать_встроенные_функции(self):
+        """Регистрирует встроенные функции языка"""
+        
+        # Математические функции
+        self.функции['плюс'] = lambda a, b: a + b
+        self.функции['минус'] = lambda a, b: a - b
+        self.функции['умножить'] = lambda a, b: a * b
+        self.функции['разделить'] = lambda a, b: a / b if b != 0 else 0
+        self.функции['степень'] = lambda a, b: a ** b
+        self.функции['корень'] = lambda a: a ** 0.5
+        self.функции['модуль'] = lambda a: abs(a)
+        self.функции['округлить'] = lambda a, n=0: round(a, int(n))
+        self.функции['целая_часть'] = lambda a: int(a)
+        self.функции['дробная_часть'] = lambda a: a - int(a)
+        self.функции['максимум'] = lambda *args: max(args) if args else 0
+        self.функции['минимум'] = lambda *args: min(args) if args else 0
+        self.функции['сумма'] = lambda lst: sum(lst)
+        self.функции['среднее'] = lambda lst: sum(lst) / len(lst) if lst else 0
+        
+        # Функции работы со строками
+        self.функции['длина'] = lambda s: len(s)
+        self.функции['верхний_регистр'] = lambda s: str(s).upper()
+        self.функции['нижний_регистр'] = lambda s: str(s).lower()
+        self.функции['заглавная'] = lambda s: str(s).capitalize()
+        self.функции['разделить'] = lambda s, sep=' ': str(s).split(sep)
+        self.функции['соединить'] = lambda lst, sep='': sep.join(map(str, lst))
+        self.функции['заменить'] = lambda s, old, new: str(s).replace(old, new)
+        self.функции['обрезать'] = lambda s: str(s).strip()
+        self.функции['найти'] = lambda s, sub: str(s).find(sub)
+        self.функции['считать'] = lambda s, sub: str(s).count(sub)
+        self.функции['начинается_с'] = lambda s, prefix: str(s).startswith(prefix)
+        self.функции['заканчивается_на'] = lambda s, suffix: str(s).endswith(suffix)
+        self.функции['подстрока'] = lambda s, start, end=None: str(s)[start:end]
+        self.функции['перевернуть'] = lambda s: str(s)[::-1]
+        
+        # Функции ввода-вывода
+        self.функции['написать_строку'] = self._написать_строку
+        self.функции['написать'] = self._написать
+        self.функции['спросить'] = self._спросить
+        self.функции['печатать'] = self._написать_строку
+        
+        # Функции работы с типами
+        self.функции['целое'] = lambda x: int(x)
+        self.функции['дробное'] = lambda x: float(x)
+        self.функции['строка'] = lambda x: str(x)
+        self.функции['логическое'] = lambda x: bool(x)
+        self.функции['список'] = lambda *args: list(args)
+        self.функции['словарь'] = lambda **kwargs: kwargs
+        self.функции['множество'] = lambda *args: set(args)
+        self.функции['кортеж'] = lambda *args: tuple(args)
+        
+        # Функции работы со списками
+        self.функции['добавить'] = self._добавить_в_список
+        self.функции['удалить'] = self._удалить_из_списка
+        self.функции['вставить'] = self._вставить_в_список
+        self.функции['очистить'] = self._очистить_список
+        self.функции['сортировать'] = lambda lst: sorted(lst)
+        self.функции['обратный'] = lambda lst: list(reversed(lst))
+        self.функции['индекс'] = lambda lst, item: lst.index(item)
+        self.функции['содержит'] = lambda lst, item: item in lst
+        
+        # Логические функции
+        self.функции['истина'] = lambda: True
+        self.функции['ложь'] = lambda: False
+        self.функции['не'] = lambda x: not x
+        self.функции['и'] = lambda a, b: a and b
+        self.функции['или'] = lambda a, b: a or b
+        self.функции['равно'] = lambda a, b: a == b
+        self.функции['не_равно'] = lambda a, b: a != b
+        self.функции['больше'] = lambda a, b: a > b
+        self.функции['меньше'] = lambda a, b: a < b
+        self.функции['больше_или_равно'] = lambda a, b: a >= b
+        self.функции['меньше_или_равно'] = lambda a, b: a <= b
+        
+        # Функции работы с датой и временем
+        from datetime import datetime
+        self.функции['сейчас'] = lambda: datetime.now()
+        self.функции['сегодня'] = lambda: datetime.now().date()
+        self.функции['год'] = lambda d: d.year if hasattr(d, 'year') else datetime.now().year
+        self.функции['месяц'] = lambda d: d.month if hasattr(d, 'month') else datetime.now().month
+        self.функции['день'] = lambda d: d.day if hasattr(d, 'day') else datetime.now().day
+        self.функции['час'] = lambda d: d.hour if hasattr(d, 'hour') else datetime.now().hour
+        self.функции['минута'] = lambda d: d.minute if hasattr(d, 'minute') else datetime.now().minute
+        self.функции['секунда'] = lambda d: d.second if hasattr(d, 'second') else datetime.now().second
+        
+        # Системные функции
+        self.функции['выход'] = self._выход
+        self.функции['тип'] = lambda x: type(x).__name__
+        self.функции['ид'] = lambda x: id(x)
+        self.функции['помощь'] = self._помощь
+        self.функции['dir'] = lambda x: dir(x)
+        
+        # Случайные числа
+        import random
+        self.функции['случайное_целое'] = lambda a, b: random.randint(a, b)
+        self.функции['случайное_дробное'] = lambda: random.random()
+        self.функции['случайный_элемент'] = lambda lst: random.choice(lst)
+        self.функции['перемешать'] = lambda lst: random.shuffle(lst) or lst
+    
+    def _написать_строку(self, *args, **kwargs):
+        """Вывод строки с переводом строки"""
+        разделитель = kwargs.get('разделитель', ' ')
+        окончание = kwargs.get('окончание', '\n')
+        текст = разделитель.join(map(str, args))
+        вывод = текст + окончание
+        print(вывод, end='')
+        self.результат_выполнения.append(вывод)
+    
+    def _написать(self, *args, **kwargs):
+        """Вывод строки без перевода строки"""
+        разделитель = kwargs.get('разделитель', ' ')
+        текст = разделитель.join(map(str, args))
+        print(текст, end='')
+        self.результат_выполнения.append(текст)
+    
+    def _спросить(self, подсказка=""):
+        """Запрос ввода от пользователя"""
+        try:
+            ввод = input(подсказка)
+            return ввод
+        except EOFError:
+            return ""
+    
+    def _добавить_в_список(self, lst, item):
+        """Добавить элемент в список"""
+        if isinstance(lst, list):
+            lst.append(item)
+        return lst
+    
+    def _удалить_из_списка(self, lst, item):
+        """Удалить элемент из списка"""
+        if isinstance(lst, list) and item in lst:
+            lst.remove(item)
+        return lst
+    
+    def _вставить_в_список(self, lst, index, item):
+        """Вставить элемент в список по индексу"""
+        if isinstance(lst, list):
+            lst.insert(int(index), item)
+        return lst
+    
+    def _очистить_список(self, lst):
+        """Очистить список"""
+        if isinstance(lst, list):
+            lst.clear()
+        return lst
+    
+    def _выход(self, код=0):
+        """Выход из программы"""
+        sys.exit(int(код))
+    
+    def _помощь(self, объект=None):
+        """Показать справку"""
+        if объект:
+            help(объект)
+        else:
+            print("Доступные функции:", list(self.функции.keys()))
+            print("Доступные библиотеки:", list(self.библиотеки.keys()))
+    
+    def выполнить(self, код: str):
+        """Выполняет код на языке РусКод"""
+        строки = код.strip().split('\n')
+        i = 0
+        
+        while i < len(строки):
+            строка = строки[i].strip()
+            
+            # Пропускаем пустые строки и комментарии
+            if not строка or строка.startswith('#') or строка.startswith('//'):
+                i += 1
+                continue
+            
+            # Обработка команды "использовать"
+            if строка.startswith('использовать '):
+                self._обработать_импорт(строка)
+                i += 1
+                continue
+            
+            # Обработка команды "функция"
+            if строка.startswith('функция '):
+                i = self._обработать_функцию(строки, i)
+                continue
+            
+            # Обработка условия "если"
+            if строка.startswith('если '):
+                i = self._обработать_условие(строки, i)
+                continue
+            
+            # Обработка цикла "повторить N раз"
+            if строка.startswith('повторить '):
+                i = self._обработать_цикл_повторить(строки, i)
+                continue
+            
+            # Обработка цикла "пока"
+            if строка.startswith('пока '):
+                i = self._обработать_цикл_пока(строки, i)
+                continue
+            
+            # Обработка цикла "для"
+            if строка.startswith('для '):
+                i = self._обработать_цикл_для(строки, i)
+                continue
+            
+            # Обработка присваивания
+            if ' равна ' in строка or ' равно ' in строка:
+                self._обработать_присваивание(строка)
+                i += 1
+                continue
+            
+            # Обработка вызова функции
+            if '(' in строка and ')' in строка:
+                self._вызвать_функцию_из_строки(строка)
+                i += 1
+                continue
+            
+            i += 1
+    
+    def _обработать_импорт(self, строка: str):
+        """Обрабатывает команду импорта библиотеки"""
+        части = строка.replace('использовать ', '').strip().split(' как ')
+        имя_модуля = части[0].strip()
+        псевдоним = части[1].strip() if len(части) > 1 else None
+        
+        try:
+            # Пробуем импортировать через адаптер
+            модуль = self.адаптер.импортировать_модуль(имя_модуля, псевдоним)
+            
+            if псевдоним:
+                self.библиотеки[псевдоним] = модуль
+                self.переменные[псевдоним] = модуль
+            else:
+                русское_имя = self.адаптер.словарь_перевода.get(имя_модуля, имя_модуля)
+                self.библиотеки[русское_имя] = модуль
+                self.переменные[русское_имя] = модуль
+            
+            # Добавляем функции модуля в пространство имен
+            обертка = self.адаптер.создать_обертку_модуля(модуль, имя_модуля)
+            for имя, функция in обертка.items():
+                if имя not in self.функции:
+                    self.функции[имя] = функция
+        
+        except ImportError as e:
+            print(f"Ошибка импорта: {e}")
+    
+    def _обработать_функцию(self, строки: List[str], start_index: int) -> int:
+        """Обрабатывает объявление функции"""
+        строка = строки[start_index]
+        
+        # Парсим: функция имя(параметры):
+        match = re.match(r'функция\s+(\w+)\s*\(([^)]*)\)\s*:', строка)
+        if not match:
+            # Пробуем без двоеточия
+            match = re.match(r'функция\s+(\w+)\s*\(([^)]*)\)', строка)
+        
+        if match:
+            имя = match.group(1)
+            параметры = [p.strip() for p in match.group(2).split(',') if p.strip()]
+            
+            # Находим тело функции
+            тело = []
+            i = start_index + 1
+            базовая_индентация = len(строка) - len(строка.lstrip())
+            
+            while i < len(строки):
+                текущая = строки[i]
+                if not текущая.strip():
+                    i += 1
+                    continue
+                
+                текущая_индентация = len(текущая) - len(текущая.lstrip())
+                
+                if текущая_индентация <= базовая_индентация and текущая.strip():
+                    break
+                
+                тело.append(текущая)
+                i += 1
+            
+            # Создаем функцию
+            def создать_функцию(парам, тело_функции):
+                def внутренняя_функция(*args):
+                    # Сохраняем текущие переменные
+                    сохраненные = self.переменные.copy()
+                    
+                    # Устанавливаем параметры
+                    for j, param in enumerate(парам):
+                        if j < len(args):
+                            self.переменные[param] = args[j]
+                    
+                    # Выполняем тело функции
+                    self.выполнить('\n'.join(тело_функции))
+                    
+                    # Возвращаем результат (если есть)
+                    результат = self.переменные.get('результат', None)
+                    
+                    # Восстанавливаем переменные
+                    self.переменные = сохраненные
+                    
+                    return результат
+                
+                return внутренняя_функция
+            
+            self.функции[имя] = создать_функцию(параметры, тело)
+            return i
+        
+        return start_index + 1
+    
+    def _обработать_условие(self, строки: List[str], start_index: int) -> int:
+        """Обрабатывает условный оператор если"""
+        строка = строки[start_index]
+        
+        # Парсим условие
+        match = re.match(r'если\s+(.+?)\s+то\s*:?|если\s+(.+)', строка)
+        if match:
+            условие_текст = match.group(1) or match.group(2)
+            
+            # Находим ветку "то"
+            тело_то = []
+            тело_иначе = []
+            i = start_index + 1
+            базовая_индентация = len(строка) - len(строка.lstrip())
+            в_ветке_иначе = False
+            
+            while i < len(строки):
+                текущая = строки[i]
+                
+                if not текущая.strip():
+                    i += 1
+                    continue
+                
+                текущая_индентация = len(текущая) - len(текущая.lstrip())
+                
+                # Проверяем на "иначе"
+                if 'иначе:' in текущая or текущая.strip() == 'иначе':
+                    в_ветке_иначе = True
+                    i += 1
+                    continue
+                
+                if текущая_индентация <= базовая_индентация and текущая.strip():
+                    if not в_ветке_иначе and (текущая.startswith('иначе') or 'иначе' in текущая):
+                        в_ветке_иначе = True
+                        i += 1
+                        continue
+                    break
+                
+                if в_ветке_иначе:
+                    тело_иначе.append(текущая)
+                else:
+                    тело_то.append(текущая)
+                
+                i += 1
+            
+            # Вычисляем условие
+            try:
+                результат_условия = self._вычислить_выражение(условие_текст)
+                
+                if результат_условия:
+                    self.выполнить('\n'.join(тело_то))
+                else:
+                    self.выполнить('\n'.join(тело_иначе))
+            
+            except Exception as e:
+                print(f"Ошибка в условии: {e}")
+            
+            return i
+        
+        return start_index + 1
+    
+    def _обработать_цикл_повторить(self, строки: List[str], start_index: int) -> int:
+        """Обрабатывает цикл повторить N раз"""
+        строка = строки[start_index]
+        
+        match = re.match(r'повторить\s+(\d+)\s+раз\s*:?', строка)
+        if match:
+            количество = int(match.group(1))
+            
+            тело = []
+            i = start_index + 1
+            базовая_индентация = len(строка) - len(строка.lstrip())
+            
+            while i < len(строки):
+                текущая = строки[i]
+                
+                if not текущая.strip():
+                    i += 1
+                    continue
+                
+                текущая_индентация = len(текущая) - len(текущая.lstrip())
+                
+                if текущая_индентация <= базовая_индентация and текущая.strip():
+                    break
+                
+                тело.append(текущая)
+                i += 1
+            
+            # Выполняем цикл
+            for j in range(количество):
+                self.переменные['счетчик'] = j
+                self.выполнить('\n'.join(тело))
+            
+            return i
+        
+        return start_index + 1
+    
+    def _обработать_цикл_пока(self, строки: List[str], start_index: int) -> int:
+        """Обрабатывает цикл пока"""
+        строка = строки[start_index]
+        
+        match = re.match(r'пока\s+(.+?)\s*:?', строка)
+        if match:
+            условие_текст = match.group(1)
+            
+            тело = []
+            i = start_index + 1
+            базовая_индентация = len(строка) - len(строка.lstrip())
+            
+            while i < len(строки):
+                текущая = строки[i]
+                
+                if not текущая.strip():
+                    i += 1
+                    continue
+                
+                текущая_индентация = len(текущая) - len(текущая.lstrip())
+                
+                if текущая_индентация <= базовая_индентация and текущая.strip():
+                    break
+                
+                тело.append(текущая)
+                i += 1
+            
+            # Выполняем цикл
+            макс_итераций = 10000
+            итерация = 0
+            
+            while итерация < макс_итераций:
+                try:
+                    результат = self._вычислить_выражение(условие_текст)
+                    if not результат:
+                        break
+                except:
+                    break
+                
+                self.выполнить('\n'.join(тело))
+                итерация += 1
+            
+            return i
+        
+        return start_index + 1
+    
+    def _обработать_цикл_для(self, строки: List[str], start_index: int) -> int:
+        """Обрабатывает цикл для"""
+        строка = строки[start_index]
+        
+        match = re.match(r'для\s+(\w+)\s+в\s+(.+?)\s*:?', строка)
+        if match:
+            переменная = match.group(1)
+            выражение_списка = match.group(2)
+            
+            тело = []
+            i = start_index + 1
+            базовая_индентация = len(строка) - len(строка.lstrip())
+            
+            while i < len(строки):
+                текущая = строки[i]
+                
+                if not текущая.strip():
+                    i += 1
+                    continue
+                
+                текущая_индентация = len(текущая) - len(текущая.lstrip())
+                
+                if текущая_индентация <= базовая_индентация and текущая.strip():
+                    break
+                
+                тело.append(текущая)
+                i += 1
+            
+            # Получаем список
+            try:
+                список = self._вычислить_выражение(выражение_списка)
+                
+                if isinstance(список, (list, tuple, set)):
+                    for элемент in список:
+                        self.переменные[переменная] = элемент
+                        self.выполнить('\n'.join(тело))
+                elif isinstance(список, dict):
+                    for ключ in список:
+                        self.переменные[переменная] = ключ
+                        self.выполнить('\n'.join(тело))
+            
+            except Exception as e:
+                print(f"Ошибка в цикле для: {e}")
+            
+            return i
+        
+        return start_index + 1
+    
+    def _обработать_присваивание(self, строка: str):
+        """Обрабатывает присваивание переменной"""
+        # Разделяем по "равна" или "равно"
+        if ' равна ' in строка:
+            части = строка.split(' равна ', 1)
+        elif ' равно ' in строка:
+            части = строка.split(' равно ', 1)
+        else:
+            return
+        
+        имя = части[0].strip()
+        значение_текст = части[1].strip()
+        
+        # Проверяем, не является ли значение вызовом функции
+        match = re.match(r'(\w+)\s*\((.*)\)$', значение_текст)
+        if match:
+            имя_функции = match.group(1)
+            аргументы_текст = match.group(2)
+            
+            аргументы = []
+            if аргументы_текст.strip():
+                глубина = 0
+                текущий = ""
+                for символ in аргументы_текст:
+                    if символ in '([{':
+                        глубина += 1
+                    elif символ in ')]}':
+                        глубина -= 1
+                    
+                    if символ == ',' and глубина == 0:
+                        аргументы.append(self._вычислить_выражение(текущий.strip()))
+                        текущий = ""
+                    else:
+                        текущий += символ
+                
+                if текущий.strip():
+                    аргументы.append(self._вычислить_выражение(текущий.strip()))
+            
+            значение = self._вызвать_функцию(имя_функции, аргументы)
+        else:
+            # Вычисляем значение
+            значение = self._вычислить_выражение(значение_текст)
+        
+        # Сохраняем в переменные
+        self.переменные[имя] = значение
+    
+    def _вычислить_выражение(self, выражение: str) -> Any:
+        """Вычисляет значение выражения"""
+        выражение = выражение.strip()
+        
+        # Если это число
+        try:
+            if '.' in выражение:
+                return float(выражение)
+            return int(выражение)
+        except ValueError:
+            pass
+        
+        # Если это строка в кавычках
+        if (выражение.startswith('"') and выражение.endswith('"')) or \
+           (выражение.startswith("'") and выражение.endswith("'")):
+            return выражение[1:-1]
+        
+        # Если это логическое значение
+        if выражение == 'истина' or выражение == 'True':
+            return True
+        if выражение == 'ложь' or выражение == 'False':
+            return False
+        if выражение == 'ничто' or выражение == 'None':
+            return None
+        
+        # Если это переменная
+        if выражение in self.переменные:
+            return self.переменные[выражение]
+        
+        # Если это вызов функции
+        match = re.match(r'(\w+)\s*\((.*)\)$', выражение)
+        if match:
+            имя_функции = match.group(1)
+            аргументы_текст = match.group(2)
+            
+            аргументы = []
+            if аргументы_текст.strip():
+                # Разделяем аргументы
+                глубина = 0
+                текущий = ""
+                for символ in аргументы_текст:
+                    if символ in '([{':
+                        глубина += 1
+                    elif символ in ')]}':
+                        глубина -= 1
+                    
+                    if символ == ',' and глубина == 0:
+                        аргументы.append(self._вычислить_выражение(текущий.strip()))
+                        текущий = ""
+                    else:
+                        текущий += символ
+                
+                if текущий.strip():
+                    аргументы.append(self._вычислить_выражение(текущий.strip()))
+            
+            # Вызываем функцию
+            return self._вызвать_функцию(имя_функции, аргументы)
+        
+        # Если это бинарная операция
+        for оператор in [' или ', ' и ', ' >= ', ' <= ', ' == ', ' != ', ' > ', ' < ', ' + ', ' - ', ' * ', ' / ', ' ** ']:
+            if оператор in выражение:
+                части = выражение.split(оператор, 1)
+                if len(части) == 2:
+                    левый = self._вычислить_выражение(части[0])
+                    правый = self._вычислить_выражение(части[1])
+                    
+                    оператор_чистый = оператор.strip()
+                    if оператор_чистый == '+':
+                        return левый + правый
+                    elif оператор_чистый == '-':
+                        return левый - правый
+                    elif оператор_чистый == '*':
+                        return левый * правый
+                    elif оператор_чистый == '/':
+                        return левый / правый if правый != 0 else 0
+                    elif оператор_чистый == '**':
+                        return левый ** правый
+                    elif оператор_чистый == '>':
+                        return левый > правый
+                    elif оператор_чистый == '<':
+                        return левый < правый
+                    elif оператор_чистый == '>=':
+                        return левый >= правый
+                    elif оператор_чистый == '<=':
+                        return левый <= правый
+                    elif оператор_чистый == '==':
+                        return левый == правый
+                    elif оператор_чистый == '!=':
+                        return левый != правый
+                    elif оператор_чистый == 'и':
+                        return левый and правый
+                    elif оператор_чистый == 'или':
+                        return левый or правый
+        
+        # Возвращаем как есть (возможно это имя переменной)
+        return выражение
+    
+    def _вызвать_функцию(self, имя: str, аргументы: List[Any]) -> Any:
+        """Вызывает функцию по имени"""
+        if имя in self.функции:
+            функция = self.функции[имя]
+            try:
+                return функция(*аргументы)
+            except Exception as e:
+                print(f"Ошибка при вызове функции '{имя}': {e}")
+                return None
+        else:
+            print(f"Функция '{имя}' не найдена")
+            return None
+    
+    def _вызвать_функцию_из_строки(self, строка: str):
+        """Вызывает функцию из строки кода"""
+        match = re.match(r'(\w+)\s*\((.*)\)$', строка.strip())
+        if match:
+            имя = match.group(1)
+            аргументы_текст = match.group(2)
+            
+            аргументы = []
+            if аргументы_текст.strip():
+                глубина = 0
+                текущий = ""
+                for символ in аргументы_текст:
+                    if символ in '([{':
+                        глубина += 1
+                    elif символ in ')]}':
+                        глубина -= 1
+                    
+                    if символ == ',' and глубина == 0:
+                        аргументы.append(self._вычислить_выражение(текущий.strip()))
+                        текущий = ""
+                    else:
+                        текущий += символ
+                
+                if текущий.strip():
+                    аргументы.append(self._вычислить_выражение(текущий.strip()))
+            
+            self._вызвать_функцию(имя, аргументы)
 
-if __name__ == "__main__":
-    главный()
+
+def main():
+    """Точка входа"""
+    if len(sys.argv) < 2:
+        print("РусКод - Универсальный язык программирования на русском")
+        print("Использование: ./рускод <файл.рк>")
+        print("\nПример:")
+        print("  ./рускод программа.рк")
+        print("\nДля справки используйте функцию помощь() в коде.")
+        sys.exit(1)
+    
+    имя_файла = sys.argv[1]
+    
+    if not os.path.exists(имя_файла):
+        print(f"Ошибка: Файл '{имя_файла}' не найден")
+        sys.exit(1)
+    
+    # Читаем файл
+    with open(имя_файла, 'r', encoding='utf-8') as f:
+        код = f.read()
+    
+    # Создаем интерпретатор и выполняем код
+    интерпретатор = ИнтерпретаторРусКод()
+    
+    try:
+        интерпретатор.выполнить(код)
+    except Exception as e:
+        print(f"Ошибка выполнения: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
